@@ -13,6 +13,12 @@ export interface PanelSettings {
   drillDownLink: string;
   showBaselines: boolean;
   timeFormat: string;
+  nodePositions?: { [id: string]: NodePosition };
+}
+
+export interface NodePosition {
+  x: number;
+  y: number;
 }
 
 export interface DataMapping {

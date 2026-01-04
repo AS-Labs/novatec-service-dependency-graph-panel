@@ -126,12 +126,48 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
     });
     cy.on('select', 'node', () => this.onSelectionChange());
     cy.on('unselect', 'node', () => this.onSelectionChange());
+
+    // Add listener for drag events
+    cy.on('dragfree', 'node', this.onNodeDrag);
+
     this.setState({
       cy: cy,
       graphCanvas: graphCanvas,
     });
     graphCanvas.start();
   }
+
+  // --- Logic for saving node positions ---
+  onNodeDrag = () => {
+    const nodes = this.state.cy.nodes();
+    const positions: { [id: string]: { x: number; y: number } } = {};
+    const width = this.state.cy.width();
+    const height = this.state.cy.height();
+
+    // Prevent division by zero
+    if (width === 0 || height === 0) {
+      return;
+    }
+
+    nodes.each((node: any) => {
+      const pos = node.position();
+      // Store position relative to panel dimensions
+      positions[node.id()] = {
+        x: pos.x / width,
+        y: pos.y / height,
+      };
+    });
+
+    const currentSettings = this.getSettings(false);
+    const newSettings = {
+      ...currentSettings,
+      nodePositions: positions,
+    };
+
+    // Update the panel options via the controller
+    this.props.controller.props.onOptionsChange(newSettings);
+  };
+  // ----------------------------------------
 
   componentDidUpdate() {
     this._updateGraph(this.props.data);
@@ -153,16 +189,56 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
     // add new edges
     this.state.cy.add(cyEdges);
 
+    // Apply saved positions if they exist
+    const { nodePositions } = this.getSettings(false);
+    let nodesWithPositions = false;
+    const width = this.state.cy.width();
+    const height = this.state.cy.height();
+
+    if (nodePositions && width > 0 && height > 0) {
+      this.state.cy.nodes().each((node: any) => {
+        const pos = nodePositions[node.id()];
+        if (pos) {
+          node.position({
+            x: pos.x * width,
+            y: pos.y * height,
+          });
+          nodesWithPositions = true;
+        }
+      });
+    }
+
     if (this.initResize) {
       this.initResize = false;
       this.state.cy.resize();
       this.state.cy.reset();
-      this.runLayout();
+
+      // If we have saved positions, lock those nodes so layout doesn't move them
+      if (nodesWithPositions) {
+        this.state.cy.nodes().each((node: any) => {
+           if (nodePositions && nodePositions[node.id()]) {
+               node.lock();
+           }
+        });
+        // Run layout to place any new/unpositioned nodes, then unlock
+        this.runLayout(true);
+      } else {
+        this.runLayout();
+      }
     } else {
       if (cyNodes.length > 0) {
         _.each(updatedNodes, (node) => {
           node.lock();
         });
+
+         if (nodesWithPositions) {
+            this.state.cy.nodes().each((node: any) => {
+                if (nodePositions && nodePositions[node.id()]) {
+                    node.lock();
+                }
+            });
+        }
+
         this.runLayout(true);
       }
     }
