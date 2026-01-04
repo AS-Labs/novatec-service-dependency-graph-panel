@@ -1,3 +1,7 @@
+# FORK CHANGES
+
+Changed to retain node positions to JSON grafana panel.
+
 ## Novatec Service Dependency Graph Panel
 
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgrafana.com%2Fapi%2Fplugins%2Fnovatec-sdg-panel&query=%24.downloads&color=orange&label=downloads)
