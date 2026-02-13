@@ -267,6 +267,17 @@ export const optionsBuilder = (builder: PanelOptionsEditorBuilder<PanelSettings>
         defaultValue: DefaultSettings.externalIcons,
       })
 
+      //Position Saving
+      .addBooleanSwitch({
+        path: 'autoSavePositions',
+        name: 'Auto-Save Positions on Drag',
+        description:
+          'When enabled, node positions are saved automatically every time you drag a node. ' +
+          'When disabled, use the save button in the panel to save positions manually.',
+        category: ['Position Saving'],
+        defaultValue: DefaultSettings.autoSavePositions,
+      })
+
       //Layout
       .addSelect({
         path: 'layoutType',
@@ -285,6 +296,14 @@ export const optionsBuilder = (builder: PanelOptionsEditorBuilder<PanelSettings>
       })
 
       //Particle Animation
+      .addBooleanSwitch({
+        path: 'autoPlayParticles',
+        name: 'Auto-Play Particles',
+        description: 'Automatically start particle animation when the panel loads.',
+        category: ['Particle Animation'],
+        defaultValue: DefaultSettings.autoPlayParticles,
+      })
+
       .addNumberInput({
         path: 'particleMaxCount',
         name: 'Max Particle Count',

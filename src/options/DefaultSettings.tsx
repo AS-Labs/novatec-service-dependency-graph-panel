@@ -71,6 +71,8 @@ export const DefaultSettings: PanelSettings = {
   drillDownLink: '',
   timeFormat: 'm',
 
+  autoSavePositions: true,
+  autoPlayParticles: false,
   layoutType: 'dagre',
   particleMaxCount: 500,
   particleDensity: 0.5,

@@ -14,6 +14,8 @@ export interface PanelSettings {
   showBaselines: boolean;
   timeFormat: string;
   nodePositions?: { [id: string]: NodePosition };
+  autoSavePositions: boolean;
+  autoPlayParticles: boolean;
   layoutType: 'dagre' | 'cola';
   particleMaxCount: number;
   particleDensity: number;

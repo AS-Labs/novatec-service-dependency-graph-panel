@@ -74,6 +74,12 @@ export const PanelMigrationHandler = (panel: PanelModel<Partial<PanelSettings>> 
   }
   // Migrate panels from before v4.3.0 — add new fields with defaults
   const migrated = { ...settings };
+  if (migrated.autoSavePositions === undefined) {
+    migrated.autoSavePositions = DefaultSettings.autoSavePositions;
+  }
+  if (migrated.autoPlayParticles === undefined) {
+    migrated.autoPlayParticles = DefaultSettings.autoPlayParticles;
+  }
   if (migrated.layoutType === undefined) {
     migrated.layoutType = DefaultSettings.layoutType;
   }

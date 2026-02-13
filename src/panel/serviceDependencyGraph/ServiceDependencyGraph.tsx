@@ -59,6 +59,12 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
 
   initResize = true;
 
+  prevWidth = 0;
+
+  prevHeight = 0;
+
+  resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
   constructor(props: PanelState) {
     super(props);
 
@@ -138,23 +144,39 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
       graphCanvas: graphCanvas,
     });
     graphCanvas.start();
+
+    // Track initial panel dimensions
+    this.prevWidth = this.props.controller.props.width;
+    this.prevHeight = this.props.controller.props.height;
+
+    // Auto-play particles if setting is enabled
+    const settings = this.getSettings(false);
+    if (settings.autoPlayParticles) {
+      graphCanvas.startAnimation();
+      this.setState({
+        animate: true,
+        animateButtonClass: 'fa fa-pause-circle',
+      });
+    }
   }
 
-  // --- Logic for saving node positions ---
-  onNodeDrag = () => {
+  // --- Reusable position saving logic ---
+  savePositions = () => {
+    if (!this.state.cy) {
+      return;
+    }
+
     const nodes = this.state.cy.nodes();
     const positions: { [id: string]: { x: number; y: number } } = {};
     const width = this.state.cy.width();
     const height = this.state.cy.height();
 
-    // Prevent division by zero
     if (width === 0 || height === 0) {
       return;
     }
 
     nodes.each((node: any) => {
       const pos = node.position();
-      // Store position relative to panel dimensions
       positions[node.id()] = {
         x: pos.x / width,
         y: pos.y / height,
@@ -167,13 +189,50 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
       nodePositions: positions,
     };
 
-    // Update the panel options via the controller
     this.props.controller.props.onOptionsChange(newSettings);
+  };
+
+  // --- Drag handler — gated behind autoSavePositions ---
+  onNodeDrag = () => {
+    const settings = this.getSettings(false);
+    if (settings.autoSavePositions) {
+      this.savePositions();
+    }
   };
   // ----------------------------------------
 
   componentDidUpdate() {
     this._updateGraph(this.props.data);
+    this._handleResize();
+  }
+
+  // --- Auto-fit on panel resize ---
+  _handleResize() {
+    const currentWidth = this.props.controller.props.width;
+    const currentHeight = this.props.controller.props.height;
+
+    if (currentWidth !== this.prevWidth || currentHeight !== this.prevHeight) {
+      this.prevWidth = currentWidth;
+      this.prevHeight = currentHeight;
+
+      // Debounce to avoid thrashing during drag-resize
+      if (this.resizeTimeout) {
+        clearTimeout(this.resizeTimeout);
+      }
+      this.resizeTimeout = setTimeout(() => {
+        if (this.state.cy) {
+          this.state.cy.resize();
+          this.state.cy.fit();
+          this.setState({
+            zoom: this.state.cy.zoom(),
+          });
+          if (this.state.graphCanvas) {
+            this.state.graphCanvas.repaint(true);
+          }
+        }
+        this.resizeTimeout = null;
+      }, 200);
+    }
   }
 
   _updateGraph(graph: IntGraph) {
@@ -357,6 +416,8 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
         that.setState({
           zoom: that.state.cy.zoom(),
         });
+        // Save positions after layout completes
+        that.savePositions();
       },
     };
 
@@ -485,6 +546,10 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
     if (this.state.cy !== undefined) {
       this._updateGraph(this.props.data);
     }
+
+    const settings = this.getSettings(false);
+    const showSaveButton = !settings.autoSavePositions;
+
     return (
       <div className="graph-container">
         <div className="service-dependency-graph">
@@ -499,6 +564,15 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
             <button className="btn navbar-button width-100" onClick={() => this.fit()}>
               <i className="fa fa-dot-circle-o"></i>
             </button>
+            {showSaveButton && (
+              <button
+                className="btn navbar-button width-100"
+                onClick={() => this.savePositions()}
+                title="Save positions"
+              >
+                <i className="fa fa-floppy-o"></i>
+              </button>
+            )}
             <button className="btn navbar-button width-100" onClick={() => this.props.layerIncreaseFunction()}>
               <i className="fa fa-plus"></i>
             </button>
