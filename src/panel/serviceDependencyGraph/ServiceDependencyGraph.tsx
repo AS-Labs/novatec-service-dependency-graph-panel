@@ -4,7 +4,8 @@ import React, { PureComponent } from 'react';
 import { PanelController } from '../PanelController';
 import cyCanvas from 'cytoscape-canvas';
 import cola from 'cytoscape-cola';
-import layoutOptions from '../layout_options';
+import dagre from 'cytoscape-dagre';
+import { getLayoutOptions } from '../layout_options';
 import { Statistics } from '../statistics/Statistics';
 import _ from 'lodash';
 import {
@@ -37,6 +38,7 @@ interface PanelState {
 
 cyCanvas(cytoscape);
 cytoscape.use(cola);
+cytoscape.use(dagre);
 
 export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState> {
   ref: any;
@@ -80,6 +82,7 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
     const cy: any = cytoscape({
       container: this.ref,
       zoom: this.state.zoom,
+      maxZoom: 2.5,
       elements: this.props.data,
       layout: {
         name: 'cola',
@@ -216,9 +219,9 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
       // If we have saved positions, lock those nodes so layout doesn't move them
       if (nodesWithPositions) {
         this.state.cy.nodes().each((node: any) => {
-           if (nodePositions && nodePositions[node.id()]) {
-               node.lock();
-           }
+          if (nodePositions && nodePositions[node.id()]) {
+            node.lock();
+          }
         });
         // Run layout to place any new/unpositioned nodes, then unlock
         this.runLayout(true);
@@ -231,12 +234,12 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
           node.lock();
         });
 
-         if (nodesWithPositions) {
-            this.state.cy.nodes().each((node: any) => {
-                if (nodePositions && nodePositions[node.id()]) {
-                    node.lock();
-                }
-            });
+        if (nodesWithPositions) {
+          this.state.cy.nodes().each((node: any) => {
+            if (nodePositions && nodePositions[node.id()]) {
+              node.lock();
+            }
+          });
         }
 
         this.runLayout(true);
@@ -340,8 +343,12 @@ export class ServiceDependencyGraph extends PureComponent<PanelState, PanelState
 
   runLayout(unlockNodes = false) {
     const that = this;
+    const settings = this.getSettings(false);
+    const layoutType = settings.layoutType || 'dagre';
+    const baseOptions = getLayoutOptions(layoutType);
+
     const options = {
-      ...layoutOptions,
+      ...baseOptions,
 
       stop: function () {
         if (unlockNodes) {

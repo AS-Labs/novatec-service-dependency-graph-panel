@@ -7,11 +7,11 @@ export default class ParticleEngine {
 
   maxVolume = 800;
 
-  minSpawnPropability = 0.004;
-
-  spawnInterval: NodeJS.Timeout;
-
   animating: boolean;
+
+  lastSpawnTime = 0;
+
+  cachedCount = 0;
 
   constructor(canvasDrawer: CanvasDrawer) {
     this.drawer = canvasDrawer;
@@ -20,46 +20,44 @@ export default class ParticleEngine {
 
   start() {
     this.animating = true;
-    if (!this.spawnInterval) {
-      const that = this;
-      this.spawnInterval = setInterval(() => that.animate(), 60);
-    }
   }
 
   stop() {
     this.animating = false;
   }
 
-  animate() {
-    const that = this;
-    if (!that.animating) {
-      if (!this.hasParticles()) {
-        clearInterval(this.spawnInterval);
-        this.spawnInterval = null;
-      }
-    } else {
-      that._spawnParticles();
+  /**
+   * Called once per frame from the requestAnimationFrame loop in CanvasDrawer.
+   * This is the sole driver of particle state — no setInterval.
+   */
+  tick(now: number) {
+    if (this.animating && now - this.lastSpawnTime >= 60) {
+      this._spawnParticles(now);
+      this.lastSpawnTime = now;
     }
-    that.drawer.repaint();
   }
 
   hasParticles() {
-    for (const edge of this.drawer.cytoscape.edges().toArray()) {
-      if (
-        edge.data('particles') !== undefined &&
-        (edge.data('particles').normal.length > 0 || edge.data('particles').danger.length > 0)
-      ) {
-        return true;
-      }
-    }
-    return false;
+    return this.cachedCount > 0;
   }
 
-  _spawnParticles() {
+  _spawnParticles(now: number) {
     const cy = this.drawer.cytoscape;
+    const settings = this.drawer.controller.getSettings(true);
+    const maxCount = settings.particleMaxCount;
+    const density = settings.particleDensity;
 
-    const now = Date.now();
+    // Skip spawning entirely if at capacity or density is 0
+    if (density <= 0 || this.cachedCount >= maxCount) {
+      return;
+    }
+
     cy.edges().forEach((edge) => {
+      // Re-check cap each edge to avoid overshooting
+      if (this.cachedCount >= maxCount) {
+        return;
+      }
+
       let particles: Particles = edge.data('particles');
       const metrics: IntGraphMetrics = edge.data('metrics');
 
@@ -71,8 +69,8 @@ export default class ParticleEngine {
       const error_rate = _.defaultTo(metrics.error_rate, 0);
       const volume = rate + error_rate;
 
-      let errorRate;
-      if (rate >= 0 && error_rate >= 0) {
+      let errorRate: number;
+      if (rate > 0 && error_rate >= 0) {
         errorRate = error_rate / rate;
       } else {
         errorRate = 0;
@@ -86,10 +84,13 @@ export default class ParticleEngine {
         edge.data('particles', particles);
       }
 
-      if (metrics && volume > 0) {
-        const spawnPropability = Math.min(volume / this.maxVolume, 1.0);
+      if (volume > 0) {
+        const spawnProbability = Math.min(volume / this.maxVolume, 1.0) * density;
         for (let i = 0; i < 5; i++) {
-          if (Math.random() <= spawnPropability + this.minSpawnPropability) {
+          if (this.cachedCount >= maxCount) {
+            break;
+          }
+          if (Math.random() <= spawnProbability) {
             const particle: Particle = {
               velocity: 0.05 + Math.random() * 0.05,
               startTime: now,
@@ -99,6 +100,7 @@ export default class ParticleEngine {
             } else {
               particles.normal.push(particle);
             }
+            this.cachedCount++;
           }
         }
       }
@@ -111,9 +113,10 @@ export default class ParticleEngine {
     const count = _(cy.edges())
       .map((edge) => edge.data('particles'))
       .filter()
-      .map((particleArray) => particleArray.normal.length + particleArray.danger.length)
+      .map((particleArray: Particles) => particleArray.normal.length + particleArray.danger.length)
       .sum();
 
+    this.cachedCount = count;
     return count;
   }
 }

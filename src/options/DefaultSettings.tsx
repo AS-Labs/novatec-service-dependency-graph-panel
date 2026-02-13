@@ -70,4 +70,12 @@ export const DefaultSettings: PanelSettings = {
 
   drillDownLink: '',
   timeFormat: 'm',
+
+  layoutType: 'dagre',
+  particleMaxCount: 500,
+  particleDensity: 0.5,
+  tvMode: false,
+  tvFontSize: 10,
+  tvNodeRadius: 24,
+  minZoomForLabels: 1.0,
 };

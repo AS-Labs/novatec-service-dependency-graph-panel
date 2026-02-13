@@ -14,6 +14,13 @@ export interface PanelSettings {
   showBaselines: boolean;
   timeFormat: string;
   nodePositions?: { [id: string]: NodePosition };
+  layoutType: 'dagre' | 'cola';
+  particleMaxCount: number;
+  particleDensity: number;
+  tvMode: boolean;
+  tvFontSize: number;
+  tvNodeRadius: number;
+  minZoomForLabels: number;
 }
 
 export interface NodePosition {

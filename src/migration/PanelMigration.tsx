@@ -72,5 +72,28 @@ export const PanelMigrationHandler = (panel: PanelModel<Partial<PanelSettings>> 
       timeFormat: DefaultSettings.timeFormat,
     };
   }
-  return settings;
+  // Migrate panels from before v4.3.0 — add new fields with defaults
+  const migrated = { ...settings };
+  if (migrated.layoutType === undefined) {
+    migrated.layoutType = DefaultSettings.layoutType;
+  }
+  if (migrated.particleMaxCount === undefined) {
+    migrated.particleMaxCount = DefaultSettings.particleMaxCount;
+  }
+  if (migrated.particleDensity === undefined) {
+    migrated.particleDensity = DefaultSettings.particleDensity;
+  }
+  if (migrated.tvMode === undefined) {
+    migrated.tvMode = DefaultSettings.tvMode;
+  }
+  if (migrated.tvFontSize === undefined) {
+    migrated.tvFontSize = DefaultSettings.tvFontSize;
+  }
+  if (migrated.tvNodeRadius === undefined) {
+    migrated.tvNodeRadius = DefaultSettings.tvNodeRadius;
+  }
+  if (migrated.minZoomForLabels === undefined) {
+    migrated.minZoomForLabels = DefaultSettings.minZoomForLabels;
+  }
+  return migrated;
 };

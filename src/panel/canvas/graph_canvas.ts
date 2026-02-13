@@ -33,8 +33,6 @@ export default class CanvasDrawer {
     },
   };
 
-  readonly donutRadius: number = 15;
-
   controller: ServiceDependencyGraph;
 
   cytoscape: cytoscape.Core;
@@ -90,6 +88,16 @@ export default class CanvasDrawer {
     this.offscreenContext = this.offscreenCanvas.getContext('2d');
 
     this.repaint(true);
+  }
+
+  get nodeRadius(): number {
+    const settings = this.controller.getSettings(true);
+    return settings.tvMode ? settings.tvNodeRadius : 15;
+  }
+
+  get fontSize(): number {
+    const settings = this.controller.getSettings(true);
+    return settings.tvMode ? settings.tvFontSize : 6;
   }
 
   _getTimeScale(timeUnit: string) {
@@ -205,7 +213,12 @@ export default class CanvasDrawer {
     if (!forceRepaint && this._skipFrame()) {
       return;
     }
-    this.lastRenderTime = Date.now();
+
+    const now = Date.now();
+    this.lastRenderTime = now;
+
+    // Tick the particle engine from the render loop — single animation driver
+    this.particleEngine.tick(now);
 
     const ctx = this.context;
     const cyCanvas = this.cyCanvas;
@@ -239,7 +252,6 @@ export default class CanvasDrawer {
     this._drawNodes(offscreenContext);
 
     // static element rendering
-    // cyCanvas.resetTransform(ctx);
     cyCanvas.clear(ctx);
     if (this.controller.getSettings(true).showDebugInformation) {
       this._drawDebugInformation();
@@ -281,6 +293,7 @@ export default class CanvasDrawer {
 
   _drawEdges(ctx: CanvasRenderingContext2D, edges: cytoscape.EdgeSingular[], now: number) {
     const cy = this.cytoscape;
+    const settings = this.controller.getSettings(true);
 
     for (const edge of edges) {
       const sourcePoint = edge.sourceEndpoint();
@@ -289,8 +302,7 @@ export default class CanvasDrawer {
       this._drawEdgeParticles(ctx, edge, sourcePoint, targetPoint, now);
     }
 
-    const { showConnectionStats } = this.controller.getSettings(true);
-    if (showConnectionStats && cy.zoom() > 1) {
+    if (settings.showConnectionStats && cy.zoom() > settings.minZoomForLabels) {
       for (const edge of edges) {
         this._drawEdgeLabel(ctx, edge);
       }
@@ -336,7 +348,9 @@ export default class CanvasDrawer {
   }
 
   _drawEdgeLabel(ctx: CanvasRenderingContext2D, edge: cytoscape.EdgeSingular) {
-    const { timeFormat } = this.controller.getSettings(true);
+    const settings = this.controller.getSettings(true);
+    const { timeFormat } = settings;
+    const fs = this.fontSize;
 
     const midpoint = edge.midpoint();
     const xMid = midpoint.x;
@@ -365,7 +379,7 @@ export default class CanvasDrawer {
 
     if (statistics.length > 0) {
       const edgeLabel = statistics.join(', ');
-      this._drawLabel(ctx, edgeLabel, xMid, yMid, edge);
+      this._drawLabel(ctx, edgeLabel, xMid, yMid, edge, fs);
     }
   }
 
@@ -432,25 +446,30 @@ export default class CanvasDrawer {
     ctx.fill();
   }
 
-  _drawLabel(ctx: CanvasRenderingContext2D, label: string, cX: number, cY: number, edge: cytoscape.EdgeSingular) {
+  _drawLabel(
+    ctx: CanvasRenderingContext2D,
+    label: string,
+    cX: number,
+    cY: number,
+    edge: cytoscape.EdgeSingular,
+    fs: number
+  ) {
     const labelPadding = 1;
-    ctx.font = '6px Arial';
+    ctx.font = fs + 'px Arial';
 
     const labelWidth = ctx.measureText(label).width;
     let xPos = cX - labelWidth / 2;
-    let yPos = cY + 3;
+    let yPos = cY + fs / 2;
     let labelArea: Rectangle = {
       coordinates: {
         x: xPos - labelPadding + 4,
-        y: yPos - 6 - labelPadding + 4,
+        y: yPos - fs - labelPadding + 4,
       },
       width: labelWidth,
-      height: 6,
+      height: fs,
     };
 
     if (!isNaN(labelArea.coordinates.x) || !isNaN(labelArea.coordinates.y) || !isNaN(xPos) || !isNaN(yPos)) {
-      // TODO: Rather than using a fixed number here, we should find a way to compute a second boundary condition smarter.
-      // This is for the case when all nodes are so close together the labels need to overlap each other.
       const maxRepeats = 1000;
       let repeats = 0;
       while (this.collisionDetector.isColliding(labelArea) && repeats < maxRepeats) {
@@ -460,11 +479,11 @@ export default class CanvasDrawer {
         xPos = nextPoint.x;
         repeats++;
       }
-      this.collisionDetector.addRectangle(xPos - 4, yPos - 4, labelWidth + 12, 12);
+      this.collisionDetector.addRectangle(xPos - 4, yPos - 4, labelWidth + 12, fs + 6);
     }
 
     ctx.fillStyle = this.colors.default;
-    ctx.fillRect(xPos - labelPadding, yPos - 6 - labelPadding, labelWidth + 2 * labelPadding, 6 + 2 * labelPadding);
+    ctx.fillRect(xPos - labelPadding, yPos - fs - labelPadding, labelWidth + 2 * labelPadding, fs + 2 * labelPadding);
     ctx.fillStyle = this.colors.background;
     ctx.fillText(label, xPos, yPos);
   }
@@ -491,8 +510,9 @@ export default class CanvasDrawer {
     const yPos = sourcePoint.y + yDirection * timeDelta * particle.velocity;
 
     if (xPos > xMaxLimit || xPos < xMinLimit || yPos > yMaxLimit || yPos < yMinLimit) {
-      // remove particle
-      particles.splice(index, 1);
+      // Swap-and-pop removal: O(1) instead of splice O(n)
+      particles[index] = particles[particles.length - 1];
+      particles.pop();
     } else {
       // draw particle
       ctx.moveTo(xPos, yPos);
@@ -503,6 +523,7 @@ export default class CanvasDrawer {
   _drawNodes(ctx: CanvasRenderingContext2D) {
     const that = this;
     const cy = this.cytoscape;
+    const settings = this.controller.getSettings(true);
 
     // Draw model elements
     const nodes = cy.nodes().toArray();
@@ -526,8 +547,8 @@ export default class CanvasDrawer {
         that._drawNode(ctx, node);
       }
 
-      // drawing the node label in case we are not zoomed out
-      if (cy.zoom() > 1) {
+      // drawing the node label — use minZoomForLabels setting instead of hardcoded 1
+      if (cy.zoom() > settings.minZoomForLabels) {
         that._drawNodeLabel(ctx, node);
       }
     }
@@ -535,8 +556,11 @@ export default class CanvasDrawer {
 
   _drawNode(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
     const cy = this.cytoscape;
+    const settings = this.controller.getSettings(true);
     const type = node.data('type');
     const metrics: IntGraphMetrics = node.data('metrics');
+    const radius = this.nodeRadius;
+    const donutWidth = Math.round(radius / 3);
 
     if (type === EnGraphNodeType.INTERNAL) {
       const requestCount = _.defaultTo(metrics.rate, -1);
@@ -562,22 +586,21 @@ export default class CanvasDrawer {
       }
 
       // drawing the donut
-      this._drawDonut(ctx, node, 15, 5, 0.5, [errorPct, unknownPct, healthyPct]);
+      this._drawDonut(ctx, node, radius, donutWidth, 0.5, [errorPct, unknownPct, healthyPct]);
 
       // drawing the baseline status
-      const { showBaselines } = this.controller.getSettings(true);
-      if (showBaselines && responseTime >= 0 && threshold >= 0) {
+      if (settings.showBaselines && responseTime >= 0 && threshold >= 0) {
         const thresholdViolation = threshold < responseTime;
 
-        this._drawThresholdStroke(ctx, node, thresholdViolation, 15, 5, 0.5);
+        this._drawThresholdStroke(ctx, node, thresholdViolation, radius, donutWidth, 0.5);
       }
       this._drawServiceIcon(ctx, node);
     } else {
       this._drawExternalService(ctx, node);
     }
 
-    // draw statistics
-    if (cy.zoom() > 1) {
+    // draw statistics — use minZoomForLabels setting
+    if (cy.zoom() > settings.minZoomForLabels) {
       this._drawNodeStatistics(ctx, node);
     }
   }
@@ -585,6 +608,7 @@ export default class CanvasDrawer {
   _drawServiceIcon(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
     const nodeId: string = node.id();
     const iconMappings = this.controller.getSettings(true).icons;
+    const radius = this.nodeRadius;
 
     const mapping = _.find(iconMappings, ({ pattern }) => {
       try {
@@ -599,7 +623,7 @@ export default class CanvasDrawer {
       if (image != null) {
         const cX = node.position().x;
         const cY = node.position().y;
-        const iconSize = 16;
+        const iconSize = Math.round(radius * 1.07);
 
         ctx.drawImage(image, cX - iconSize / 2, cY - iconSize / 2, iconSize, iconSize);
       }
@@ -607,7 +631,10 @@ export default class CanvasDrawer {
   }
 
   _drawNodeStatistics(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
-    const { timeFormat } = this.controller.getSettings(true);
+    const settings = this.controller.getSettings(true);
+    const { timeFormat } = settings;
+    const fs = this.fontSize;
+    const radius = this.nodeRadius;
     const lines: string[] = [];
 
     const metrics: IntGraphMetrics = node.data('metrics');
@@ -632,14 +659,13 @@ export default class CanvasDrawer {
     }
 
     const pos = node.position();
-    const fontSize = 6;
-    const cX = pos.x + this.donutRadius * 1.25;
-    const cY = pos.y + fontSize / 2 - (fontSize / 2) * (lines.length - 1);
+    const cX = pos.x + radius * 1.25;
+    const cY = pos.y + fs / 2 - (fs / 2) * (lines.length - 1);
 
-    ctx.font = '6px Arial';
+    ctx.font = fs + 'px Arial';
     ctx.fillStyle = this.colors.default;
     for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], cX, cY + i * fontSize);
+      ctx.fillText(lines[i], cX, cY + i * fs);
     }
   }
 
@@ -693,15 +719,16 @@ export default class CanvasDrawer {
     const pos = node.position();
     const cX = pos.x;
     const cY = pos.y;
-    const size = 12;
+    const radius = this.nodeRadius;
+    const size = Math.round(radius * 0.8);
 
     ctx.beginPath();
-    ctx.arc(cX, cY, 12, 0, 2 * Math.PI, false);
+    ctx.arc(cX, cY, radius, 0, 2 * Math.PI, false);
     ctx.fillStyle = 'white';
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cX, cY, 11.5, 0, 2 * Math.PI, false);
+    ctx.arc(cX, cY, radius - 0.5, 0, 2 * Math.PI, false);
     ctx.fillStyle = this.colors.background;
     ctx.fill();
 
@@ -717,14 +744,18 @@ export default class CanvasDrawer {
     const pos = node.position();
     let label: string = node.id();
     const labelPadding = 1;
+    const fs = this.fontSize;
+    const settings = this.controller.getSettings(true);
+    const maxLabelLen = settings.tvMode ? 40 : 20;
 
     if (this.selectionNeighborhood.empty() || !this.selectionNeighborhood.has(node)) {
-      if (label.length > 20) {
-        label = label.substr(0, 7) + '...' + label.slice(-7);
+      if (label.length > maxLabelLen) {
+        const half = Math.floor(maxLabelLen / 3);
+        label = label.substr(0, half) + '...' + label.slice(-half);
       }
     }
 
-    ctx.font = '6px Arial';
+    ctx.font = fs + 'px Arial';
 
     const labelWidth = ctx.measureText(label).width;
     const xPos = pos.x - labelWidth / 2;
@@ -737,7 +768,7 @@ export default class CanvasDrawer {
       }
     }
 
-    const { showBaselines } = this.controller.getSettings(true);
+    const { showBaselines } = settings;
     const metrics: IntGraphMetrics = node.data('metrics');
     const responseTime = _.defaultTo(metrics.response_time, -1);
     const threshold = _.defaultTo(metrics.threshold, -1);
@@ -748,7 +779,7 @@ export default class CanvasDrawer {
       ctx.fillStyle = '#FF7383';
     }
 
-    ctx.fillRect(xPos - labelPadding, yPos - 6 - labelPadding, labelWidth + 2 * labelPadding, 6 + 2 * labelPadding);
+    ctx.fillRect(xPos - labelPadding, yPos - fs - labelPadding, labelWidth + 2 * labelPadding, fs + 2 * labelPadding);
 
     ctx.fillStyle = this.colors.background;
     ctx.fillText(label, xPos, yPos);
