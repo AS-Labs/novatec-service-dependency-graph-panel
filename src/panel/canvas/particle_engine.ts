@@ -13,6 +13,8 @@ export default class ParticleEngine {
 
   cachedCount = 0;
 
+  cachedEdges: cytoscape.EdgeSingular[] | null = null;
+
   constructor(canvasDrawer: CanvasDrawer) {
     this.drawer = canvasDrawer;
     this.animating = false;
@@ -20,10 +22,15 @@ export default class ParticleEngine {
 
   start() {
     this.animating = true;
+    this.refreshEdges();
   }
 
   stop() {
     this.animating = false;
+  }
+
+  refreshEdges() {
+    this.cachedEdges = this.drawer.cytoscape.edges().toArray();
   }
 
   /**
@@ -41,8 +48,11 @@ export default class ParticleEngine {
     return this.cachedCount > 0;
   }
 
+  particleRemoved() {
+    this.cachedCount--;
+  }
+
   _spawnParticles(now: number) {
-    const cy = this.drawer.cytoscape;
     const settings = this.drawer.controller.getSettings(true);
     const maxCount = settings.particleMaxCount;
     const density = settings.particleDensity;
@@ -52,17 +62,23 @@ export default class ParticleEngine {
       return;
     }
 
-    cy.edges().forEach((edge) => {
+    const edges = this.cachedEdges;
+    if (!edges) {
+      return;
+    }
+
+    for (let e = 0; e < edges.length; e++) {
       // Re-check cap each edge to avoid overshooting
       if (this.cachedCount >= maxCount) {
         return;
       }
 
+      const edge = edges[e];
       let particles: Particles = edge.data('particles');
       const metrics: IntGraphMetrics = edge.data('metrics');
 
       if (!metrics) {
-        return;
+        continue;
       }
 
       const rate = _.defaultTo(metrics.rate, 0);
@@ -104,19 +120,10 @@ export default class ParticleEngine {
           }
         }
       }
-    });
+    }
   }
 
   count() {
-    const cy = this.drawer.cytoscape;
-
-    const count = _(cy.edges())
-      .map((edge) => edge.data('particles'))
-      .filter()
-      .map((particleArray: Particles) => particleArray.normal.length + particleArray.danger.length)
-      .sum();
-
-    this.cachedCount = count;
-    return count;
+    return this.cachedCount;
   }
 }

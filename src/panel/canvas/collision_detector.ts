@@ -9,7 +9,7 @@ export default class CollisionDetector {
   }
 
   reset() {
-    this.blockedArea = [];
+    this.blockedArea.length = 0;
   }
 
   addRectangle(x: number, y: number, width: number, height: number) {

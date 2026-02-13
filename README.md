@@ -1,6 +1,51 @@
-# FORK CHANGES
+# Fork Changes
 
-Changed to retain node positions to JSON grafana panel.
+## Particle Rendering Performance Optimization
+
+- Batched particle rendering: all particles drawn in 2 `fillRect` loops (one per color) instead of 2 `beginPath`/`arc`/`fill` calls per edge
+- `fillRect` replaces `arc` for particle dots, eliminating per-particle trigonometry in the canvas path builder
+- Eliminated per-frame full graph scan: `_skipFrame()` uses the in-memory `cachedCount` maintained via spawn increments and removal decrements instead of iterating every edge and particle array each frame
+- Viewport culling: edges with both endpoints outside the visible viewport skip particle processing entirely
+- `sqrt` normalization replaces `atan2`+`cos`+`sin` for direction vector calculation (1 sqrt vs 3 trig calls per edge per frame)
+- Offscreen canvas buffer only reallocated when dimensions change, using `clearRect` otherwise
+- Cached edge list in particle engine, refreshed only when graph structure changes
+- Single-pass edge partition into transparent/opaque sets instead of two `.filter()` passes
+- Per-frame settings cache: `getSettings()` called once per frame and reused across all rendering methods
+- Collision detector array reused instead of reallocated every frame
+
+## Layout Options
+
+- Added breadthfirst, concentric, circle, and grid layout options (built-in Cytoscape layouts, no new dependencies)
+- Breadthfirst: directed tree layout, leveled by distance from root
+- Concentric: hub pattern, most-connected nodes in center
+- Circle: all nodes on a ring, good for small flat networks
+- Grid: rows/columns, maximum screen utilization
+
+## Save-on-Layout, Manual Save Toggle, Auto-Play, Auto-Fit on Resize
+
+- Positions saved after layout completes (sitemap button)
+- New `autoSavePositions` toggle (default on for backward compatibility); when off, a manual save button (floppy icon) appears
+- Drag-save gated behind the toggle
+- New `autoPlayParticles` setting to start particle animation on panel load
+- Panel resize triggers `cy.resize()` + `cy.fit()` with 200ms debounce
+
+## Particle Performance, Dagre Layout, and TV Mode
+
+- Replace `setInterval` with `requestAnimationFrame`-driven tick loop for particles
+- Global particle cap (default 500) and density multiplier (0-1) settings
+- O(1) swap-and-pop particle removal instead of O(n) splice
+- Cytoscape-dagre added as hierarchical layout (new default), Cola kept as selectable fallback
+- `maxZoom: 2.5` to prevent over-shrinking
+- TV Mode toggle for OPS TV screen readability with configurable font size, node radius, and min zoom for labels
+- Labels and stats always visible when `minZoomForLabels` set to 0; extended label truncation in TV mode (40 chars vs 20)
+- New settings sections: Layout, Particle Animation, TV Mode
+- Migration handler adds sensible defaults for all new fields to existing panels
+
+## Initial Fork
+
+- Node positions retained in Grafana panel JSON
+
+---
 
 ## Novatec Service Dependency Graph Panel
 

@@ -4,14 +4,13 @@ import { ServiceDependencyGraph } from '../serviceDependencyGraph/ServiceDepende
 import ParticleEngine from './particle_engine';
 import {
   CyCanvas,
-  Particle,
   EnGraphNodeType,
   Particles,
   IntGraphMetrics,
   ScaleValue,
-  DrawContext,
   Rectangle,
   Point,
+  PanelSettings,
 } from '../../types';
 import humanFormat from 'human-format';
 import assetUtils from '../asset_utils';
@@ -67,6 +66,9 @@ export default class CanvasDrawer {
 
   dashAnimationOffset = 0;
 
+  // Per-frame cached settings to avoid repeated getSettings() calls
+  private _frameSettings: PanelSettings | null = null;
+
   constructor(ctrl: ServiceDependencyGraph, cy: cytoscape.Core, cyCanvas: CyCanvas) {
     this.cytoscape = cy;
     this.cyCanvas = cyCanvas;
@@ -91,12 +93,12 @@ export default class CanvasDrawer {
   }
 
   get nodeRadius(): number {
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings || this.controller.getSettings(true);
     return settings.tvMode ? settings.tvNodeRadius : 15;
   }
 
   get fontSize(): number {
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings || this.controller.getSettings(true);
     return settings.tvMode ? settings.tvFontSize : 6;
   }
 
@@ -146,7 +148,8 @@ export default class CanvasDrawer {
 
   _getImageAsset(assetName: string, resolveName = true) {
     if (!_.has(this.imageAssets, assetName)) {
-      const { externalIcons } = this.controller.getSettings(true);
+      const settings = this._frameSettings || this.controller.getSettings(true);
+      const { externalIcons } = settings;
       const assetUrl = assetUtils.getTypeSymbol(assetName, externalIcons, resolveName);
       this._loadImage(assetUrl, assetName);
     }
@@ -199,7 +202,7 @@ export default class CanvasDrawer {
     const now = Date.now();
     const elapsedTime = now - this.lastRenderTime;
 
-    if (this.particleEngine.count() > 0) {
+    if (this.particleEngine.hasParticles()) {
       return false;
     }
 
@@ -217,6 +220,14 @@ export default class CanvasDrawer {
     const now = Date.now();
     this.lastRenderTime = now;
 
+    // Cache settings for this frame
+    this._frameSettings = this.controller.getSettings(true);
+
+    // Refresh edge cache on force repaint (graph structure changed)
+    if (forceRepaint) {
+      this.particleEngine.refreshEdges();
+    }
+
     // Tick the particle engine from the render loop — single animation driver
     this.particleEngine.tick(now);
 
@@ -226,8 +237,13 @@ export default class CanvasDrawer {
     const offscreenContext = this.offscreenContext;
     this.collisionDetector.reset();
 
-    offscreenCanvas.width = this.canvas.width;
-    offscreenCanvas.height = this.canvas.height;
+    // Only resize offscreen canvas when dimensions actually change
+    if (offscreenCanvas.width !== this.canvas.width || offscreenCanvas.height !== this.canvas.height) {
+      offscreenCanvas.width = this.canvas.width;
+      offscreenCanvas.height = this.canvas.height;
+    } else {
+      offscreenContext.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    }
 
     // offscreen rendering
     this._setTransformation(offscreenContext);
@@ -253,7 +269,7 @@ export default class CanvasDrawer {
 
     // static element rendering
     cyCanvas.clear(ctx);
-    if (this.controller.getSettings(true).showDebugInformation) {
+    if (this._frameSettings.showDebugInformation) {
       this._drawDebugInformation();
     }
 
@@ -263,6 +279,9 @@ export default class CanvasDrawer {
 
     // baseline animation
     this.dashAnimationOffset = (Date.now() % 60000) / 250;
+
+    // Clear per-frame settings cache
+    this._frameSettings = null;
   }
 
   _setTransformation(ctx: CanvasRenderingContext2D) {
@@ -281,8 +300,17 @@ export default class CanvasDrawer {
     const edges = this.cytoscape.edges().toArray();
     const hasSelection = this.selectionNeighborhood.size() > 0;
 
-    const transparentEdges = edges.filter((edge) => hasSelection && !this.selectionNeighborhood.has(edge));
-    const opaqueEdges = edges.filter((edge) => !hasSelection || this.selectionNeighborhood.has(edge));
+    // Single-pass partition instead of two filter() calls
+    const transparentEdges: cytoscape.EdgeSingular[] = [];
+    const opaqueEdges: cytoscape.EdgeSingular[] = [];
+    for (let i = 0; i < edges.length; i++) {
+      const edge = edges[i];
+      if (hasSelection && !this.selectionNeighborhood.has(edge)) {
+        transparentEdges.push(edge);
+      } else {
+        opaqueEdges.push(edge);
+      }
+    }
 
     ctx.globalAlpha = 0.25;
     this._drawEdges(ctx, transparentEdges, now);
@@ -293,13 +321,53 @@ export default class CanvasDrawer {
 
   _drawEdges(ctx: CanvasRenderingContext2D, edges: cytoscape.EdgeSingular[], now: number) {
     const cy = this.cytoscape;
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
 
-    for (const edge of edges) {
+    // Get viewport extent for culling
+    const extent = cy.extent();
+    const margin = 50; // extra margin to avoid popping
+    const vpX1 = extent.x1 - margin;
+    const vpX2 = extent.x2 + margin;
+    const vpY1 = extent.y1 - margin;
+    const vpY2 = extent.y2 + margin;
+
+    // Draw edge lines and collect particle draw data
+    const normalParticlePositions: number[] = [];
+    const dangerParticlePositions: number[] = [];
+
+    for (let i = 0; i < edges.length; i++) {
+      const edge = edges[i];
       const sourcePoint = edge.sourceEndpoint();
       const targetPoint = edge.targetEndpoint();
       this._drawEdgeLine(ctx, edge, sourcePoint, targetPoint);
-      this._drawEdgeParticles(ctx, edge, sourcePoint, targetPoint, now);
+
+      // Viewport culling: skip particles if both endpoints are outside viewport
+      if (
+        (sourcePoint.x < vpX1 && targetPoint.x < vpX1) ||
+        (sourcePoint.x > vpX2 && targetPoint.x > vpX2) ||
+        (sourcePoint.y < vpY1 && targetPoint.y < vpY1) ||
+        (sourcePoint.y > vpY2 && targetPoint.y > vpY2)
+      ) {
+        continue;
+      }
+
+      this._collectEdgeParticles(edge, sourcePoint, targetPoint, now, normalParticlePositions, dangerParticlePositions);
+    }
+
+    // Batch draw all normal particles in one fillRect loop
+    if (normalParticlePositions.length > 0) {
+      ctx.fillStyle = '#d1e2f2';
+      for (let i = 0; i < normalParticlePositions.length; i += 2) {
+        ctx.fillRect(normalParticlePositions[i] - 1, normalParticlePositions[i + 1] - 1, 2, 2);
+      }
+    }
+
+    // Batch draw all danger particles in one fillRect loop
+    if (dangerParticlePositions.length > 0) {
+      ctx.fillStyle = settings.style.dangerColor;
+      for (let i = 0; i < dangerParticlePositions.length; i += 2) {
+        ctx.fillRect(dangerParticlePositions[i] - 1, dangerParticlePositions[i + 1] - 1, 2, 2);
+      }
     }
 
     if (settings.showConnectionStats && cy.zoom() > settings.minZoomForLabels) {
@@ -348,7 +416,7 @@ export default class CanvasDrawer {
   }
 
   _drawEdgeLabel(ctx: CanvasRenderingContext2D, edge: cytoscape.EdgeSingular) {
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
     const { timeFormat } = settings;
     const fs = this.fontSize;
 
@@ -383,12 +451,13 @@ export default class CanvasDrawer {
     }
   }
 
-  _drawEdgeParticles(
-    ctx: CanvasRenderingContext2D,
+  _collectEdgeParticles(
     edge: cytoscape.EdgeSingular,
     sourcePoint: cytoscape.Position,
     targetPoint: cytoscape.Position,
-    now: number
+    now: number,
+    normalPositions: number[],
+    dangerPositions: number[]
   ) {
     const particles: Particles = edge.data('particles');
 
@@ -399,51 +468,56 @@ export default class CanvasDrawer {
     const xVector = targetPoint.x - sourcePoint.x;
     const yVector = targetPoint.y - sourcePoint.y;
 
-    const angle = Math.atan2(yVector, xVector);
-    const xDirection = Math.cos(angle);
-    const yDirection = Math.sin(angle);
+    // Use sqrt normalization instead of atan2 + cos + sin (1 sqrt vs 3 trig calls)
+    const length = Math.sqrt(xVector * xVector + yVector * yVector);
+    if (length === 0) {
+      return;
+    }
+    const xDirection = xVector / length;
+    const yDirection = yVector / length;
 
     const xMinLimit = Math.min(sourcePoint.x, targetPoint.x);
     const xMaxLimit = Math.max(sourcePoint.x, targetPoint.x);
     const yMinLimit = Math.min(sourcePoint.y, targetPoint.y);
     const yMaxLimit = Math.max(sourcePoint.y, targetPoint.y);
 
-    const drawContext: DrawContext = {
-      ctx,
-      now,
-      xDirection,
-      yDirection,
-      xMinLimit,
-      xMaxLimit,
-      yMinLimit,
-      yMaxLimit,
-      sourcePoint,
-    };
-
-    // normal particles
-    ctx.beginPath();
-
+    // Process normal particles
     let index = particles.normal.length - 1;
     while (index >= 0) {
-      this._drawParticle(drawContext, particles.normal, index);
+      const particle = particles.normal[index];
+      const timeDelta = now - particle.startTime;
+      const xPos = sourcePoint.x + xDirection * timeDelta * particle.velocity;
+      const yPos = sourcePoint.y + yDirection * timeDelta * particle.velocity;
+
+      if (xPos > xMaxLimit || xPos < xMinLimit || yPos > yMaxLimit || yPos < yMinLimit) {
+        // Swap-and-pop removal: O(1) instead of splice O(n)
+        particles.normal[index] = particles.normal[particles.normal.length - 1];
+        particles.normal.pop();
+        this.particleEngine.particleRemoved();
+      } else {
+        normalPositions.push(xPos, yPos);
+      }
       index--;
     }
 
-    ctx.fillStyle = '#d1e2f2';
-    ctx.fill();
-
-    // danger particles
-    ctx.beginPath();
-
+    // Process danger particles
     index = particles.danger.length - 1;
     while (index >= 0) {
-      this._drawParticle(drawContext, particles.danger, index);
+      const particle = particles.danger[index];
+      const timeDelta = now - particle.startTime;
+      const xPos = sourcePoint.x + xDirection * timeDelta * particle.velocity;
+      const yPos = sourcePoint.y + yDirection * timeDelta * particle.velocity;
+
+      if (xPos > xMaxLimit || xPos < xMinLimit || yPos > yMaxLimit || yPos < yMinLimit) {
+        // Swap-and-pop removal: O(1) instead of splice O(n)
+        particles.danger[index] = particles.danger[particles.danger.length - 1];
+        particles.danger.pop();
+        this.particleEngine.particleRemoved();
+      } else {
+        dangerPositions.push(xPos, yPos);
+      }
       index--;
     }
-
-    const dangerColor = this.controller.getSettings(true).style.dangerColor;
-    ctx.fillStyle = dangerColor;
-    ctx.fill();
   }
 
   _drawLabel(
@@ -500,30 +574,10 @@ export default class CanvasDrawer {
     return newPoint;
   }
 
-  _drawParticle(drawCtx: DrawContext, particles: Particle[], index: number) {
-    const { ctx, now, xDirection, yDirection, xMinLimit, xMaxLimit, yMinLimit, yMaxLimit, sourcePoint } = drawCtx;
-
-    const particle = particles[index];
-
-    const timeDelta = now - particle.startTime;
-    const xPos = sourcePoint.x + xDirection * timeDelta * particle.velocity;
-    const yPos = sourcePoint.y + yDirection * timeDelta * particle.velocity;
-
-    if (xPos > xMaxLimit || xPos < xMinLimit || yPos > yMaxLimit || yPos < yMinLimit) {
-      // Swap-and-pop removal: O(1) instead of splice O(n)
-      particles[index] = particles[particles.length - 1];
-      particles.pop();
-    } else {
-      // draw particle
-      ctx.moveTo(xPos, yPos);
-      ctx.arc(xPos, yPos, 1, 0, 2 * Math.PI, false);
-    }
-  }
-
   _drawNodes(ctx: CanvasRenderingContext2D) {
     const that = this;
     const cy = this.cytoscape;
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
 
     // Draw model elements
     const nodes = cy.nodes().toArray();
@@ -556,7 +610,7 @@ export default class CanvasDrawer {
 
   _drawNode(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
     const cy = this.cytoscape;
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
     const type = node.data('type');
     const metrics: IntGraphMetrics = node.data('metrics');
     const radius = this.nodeRadius;
@@ -607,7 +661,8 @@ export default class CanvasDrawer {
 
   _drawServiceIcon(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
     const nodeId: string = node.id();
-    const iconMappings = this.controller.getSettings(true).icons;
+    const settings = this._frameSettings!;
+    const iconMappings = settings.icons;
     const radius = this.nodeRadius;
 
     const mapping = _.find(iconMappings, ({ pattern }) => {
@@ -631,7 +686,7 @@ export default class CanvasDrawer {
   }
 
   _drawNodeStatistics(ctx: CanvasRenderingContext2D, node: cytoscape.NodeSingular) {
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
     const { timeFormat } = settings;
     const fs = this.fontSize;
     const radius = this.nodeRadius;
@@ -680,6 +735,7 @@ export default class CanvasDrawer {
     const pos = node.position();
     const cX = pos.x;
     const cY = pos.y;
+    const settings = this._frameSettings!;
 
     const strokeWidth = baseStrokeWidth * 2 * (violation ? 1.5 : 1);
     const offset = strokeWidth * 0.2;
@@ -697,7 +753,7 @@ export default class CanvasDrawer {
     ctx.closePath();
 
     ctx.setLineDash([10, 2]);
-    if (violation && this.controller.getSettings(true).animate) {
+    if (violation && settings.animate) {
       ctx.lineDashOffset = this.dashAnimationOffset;
     } else {
       ctx.lineDashOffset = 0;
@@ -745,7 +801,7 @@ export default class CanvasDrawer {
     let label: string = node.id();
     const labelPadding = 1;
     const fs = this.fontSize;
-    const settings = this.controller.getSettings(true);
+    const settings = this._frameSettings!;
     const maxLabelLen = settings.tvMode ? 40 : 20;
 
     if (this.selectionNeighborhood.empty() || !this.selectionNeighborhood.has(node)) {
@@ -807,6 +863,7 @@ export default class CanvasDrawer {
     const cX = node.position().x;
     const cY = node.position().y;
     let currentArc = -Math.PI / 2; // offset
+    const settings = this._frameSettings!;
 
     ctx.beginPath();
     ctx.arc(cX, cY, radius + strokeWidth, 0, 2 * Math.PI, false);
@@ -814,7 +871,7 @@ export default class CanvasDrawer {
     ctx.fillStyle = 'white';
     ctx.fill();
 
-    const { healthyColor, dangerColor, noDataColor } = this.controller.getSettings(true).style;
+    const { healthyColor, dangerColor, noDataColor } = settings.style;
     const colors = [dangerColor, noDataColor, healthyColor];
     for (let i = 0; i < percentages.length; i++) {
       let arc = this._drawArc(ctx, currentArc, cX, cY, radius, percentages[i], colors[i]);
