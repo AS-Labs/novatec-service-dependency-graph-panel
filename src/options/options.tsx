@@ -289,7 +289,11 @@ export const optionsBuilder = (builder: PanelOptionsEditorBuilder<PanelSettings>
         settings: {
           options: [
             { value: 'dagre', label: 'Dagre (Hierarchical)' },
+            { value: 'breadthfirst', label: 'Breadthfirst (Tree)' },
+            { value: 'concentric', label: 'Concentric (Hub)' },
             { value: 'cola', label: 'Cola (Force-Directed)' },
+            { value: 'circle', label: 'Circle (Ring)' },
+            { value: 'grid', label: 'Grid (Rows/Columns)' },
           ],
         },
         defaultValue: DefaultSettings.layoutType,

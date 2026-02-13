@@ -48,8 +48,94 @@ export const dagreOptions = {
   stop: function () {},
 };
 
-export function getLayoutOptions(layoutType: 'dagre' | 'cola') {
-  return layoutType === 'dagre' ? { ...dagreOptions } : { ...colaOptions };
+export const breadthfirstOptions = {
+  name: 'breadthfirst',
+  fit: true,
+  directed: true,
+  padding: 30,
+  circle: false,
+  grid: false,
+  spacingFactor: 1.25,
+  avoidOverlap: true,
+  nodeDimensionsIncludeLabels: false,
+  animate: true,
+  animationDuration: 500,
+  ready: function () {},
+  stop: function () {},
+};
+
+export const concentricOptions = {
+  name: 'concentric',
+  fit: true,
+  padding: 30,
+  startAngle: (3 / 2) * Math.PI,
+  sweep: undefined as undefined,
+  clockwise: true,
+  equidistant: false,
+  minNodeSpacing: 40,
+  avoidOverlap: true,
+  nodeDimensionsIncludeLabels: false,
+  // Place nodes with more connections closer to center
+  concentric: function (node: any) {
+    return node.degree();
+  },
+  levelWidth: function (nodes: any) {
+    return Math.max(1, Math.floor(nodes.maxDegree() / 4));
+  },
+  animate: true,
+  animationDuration: 500,
+  ready: function () {},
+  stop: function () {},
+};
+
+export const circleOptions = {
+  name: 'circle',
+  fit: true,
+  padding: 30,
+  avoidOverlap: true,
+  nodeDimensionsIncludeLabels: false,
+  spacingFactor: undefined as undefined,
+  radius: undefined as undefined,
+  startAngle: (3 / 2) * Math.PI,
+  sweep: undefined as undefined,
+  clockwise: true,
+  sort: undefined as undefined,
+  animate: true,
+  animationDuration: 500,
+  ready: function () {},
+  stop: function () {},
+};
+
+export const gridOptions = {
+  name: 'grid',
+  fit: true,
+  padding: 30,
+  avoidOverlap: true,
+  avoidOverlapPadding: 10,
+  nodeDimensionsIncludeLabels: false,
+  spacingFactor: undefined as undefined,
+  condense: false,
+  rows: undefined as undefined,
+  cols: undefined as undefined,
+  sort: undefined as undefined,
+  animate: true,
+  animationDuration: 500,
+  ready: function () {},
+  stop: function () {},
+};
+
+const layoutMap: { [key: string]: any } = {
+  dagre: dagreOptions,
+  cola: colaOptions,
+  breadthfirst: breadthfirstOptions,
+  concentric: concentricOptions,
+  circle: circleOptions,
+  grid: gridOptions,
+};
+
+export function getLayoutOptions(layoutType: string) {
+  const options = layoutMap[layoutType];
+  return options ? { ...options } : { ...dagreOptions };
 }
 
 // Default export for backward compatibility

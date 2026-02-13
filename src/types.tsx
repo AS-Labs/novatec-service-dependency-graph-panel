@@ -16,7 +16,7 @@ export interface PanelSettings {
   nodePositions?: { [id: string]: NodePosition };
   autoSavePositions: boolean;
   autoPlayParticles: boolean;
-  layoutType: 'dagre' | 'cola';
+  layoutType: 'dagre' | 'cola' | 'breadthfirst' | 'concentric' | 'circle' | 'grid';
   particleMaxCount: number;
   particleDensity: number;
   tvMode: boolean;
